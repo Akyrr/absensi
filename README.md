@@ -7,6 +7,7 @@ Dokumen operasional: cara menjalankan skema, konvensi migrasi, dan backup/restor
 | DBMS | PostgreSQL (diuji pada PostgreSQL 18.6 / Windows) |
 | File DDL | [`001_epic1_auth.sql`](./001_epic1_auth.sql) (skema Epic 1) · [`002_access_and_encoding.sql`](./002_access_and_encoding.sql) (akses team + encoding) |
 | Backup | [`absensi.dump`](./absensi.dump) (snapshot skema + seed) |
+| Info/Desain | [DESAIN.md](./DESAIN.md) |
 
 ## Cara menjalankan
 
