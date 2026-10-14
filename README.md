@@ -5,7 +5,7 @@ Dokumen operasional: cara menjalankan skema, konvensi migrasi, dan backup/restor
 | Item | Nilai |
 |---|---|
 | DBMS | PostgreSQL (diuji pada PostgreSQL 18.6 / Windows) |
-| File DDL | [`001_epic1_auth.sql`](./001_epic1_auth.sql) (skema Epic 1) · [`002_access_and_encoding.sql`](./002_access_and_encoding.sql) (akses team + encoding) |
+| File DDL | [`001_epic1_auth.sql`](./001_epic1_auth.sql) (skema Epic 1) · [`002_access_and_encoding.sql`](./002_access_and_encoding.sql) (akses team + encoding) · [`003_add_failed_login_at.sql`](./003_add_failed_login_at.sql) (jendela lockout 15 menit) |
 | Backup | [`absensi.dump`](./absensi.dump) (snapshot skema + seed) |
 | Info/Desain | [DESAIN.md](./DESAIN.md) |
 
@@ -18,6 +18,7 @@ Buat database dengan encoding UTF8, lalu jalankan **semua** file `.sql` **beruru
 ```powershell
 psql -U user lu -d absensi -v ON_ERROR_STOP=1 -f database\001_epic1_auth.sql
 psql -U user lu -d absensi -v ON_ERROR_STOP=1 -f database\002_access_and_encoding.sql
+psql -U user lu -d absensi -v ON_ERROR_STOP=1 -f database\003_add_failed_login_at.sql
 ```
 
 Cek hasilnya:
