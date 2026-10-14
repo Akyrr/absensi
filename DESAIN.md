@@ -38,6 +38,7 @@ erDiagram
         varchar avatar_url
         boolean is_active "true/false saja"
         smallint failed_login_attempts "lockout 5x/15 menit"
+        timestamptz failed_login_at "gagal terakhir, jendela 15 menit"
         timestamptz locked_until
         timestamptz password_changed_at
         timestamptz created_at
@@ -88,7 +89,7 @@ Referensi tetap. Diisi otomatis saat import: `admin`, `waka_kurikulum`, `waka_ke
 - `email` wajib, unik **case-insensitive** (index `lower(email)`), disimpan lowercase oleh trigger.
 - `password_hash` nullable untuk akun Google-only; `CHECK` memastikan minimal diawali `$` (format bcrypt/argon2).
 - `nisn` nullable + unik, format 10 digit — hanya untuk akun siswa.
-- Kolom lockout: `failed_login_attempts` + `locked_until` (5 gagal/15 menit → kunci 15 menit, PRD Bagian 3.B).
+- Kolom lockout (3): `failed_login_attempts` (counter), `failed_login_at` (waktu kegagalan terakhir — dasar jendela 15 menit), `locked_until` (hasil kunci). Counter direset bila jeda sejak `failed_login_at` melebihi 15 menit, sehingga "5 gagal dalam 15 menit -> kunci 15 menit" sesuai PRD Bagian 3.B; kegagalan yang tersebar berhari-hari tidak ikut mengakumulasi. `NULL` pada `failed_login_at` = belum pernah gagal atau baru direset.
 - `is_active` boolean — **hanya 2 status akun** (tidak ada pending/locked permanen, PRD Bagian 3.A).
 - Tidak ada kolom `deleted_at` — penonaktifan = `is_active = false`.
 
@@ -132,6 +133,7 @@ Baseline = tabel di Bagian 8. Semua kolom PRD dipertahankan; berikut **tambahan*
 | 5 | `sessions` | `ip_address`, `user_agent`, `last_used_at` | Pelengkap `device_info`, berguna untuk debugging & keamanan |
 | 6 | semua | `COMMENT ON ...` | Dokumentasi schema bawaan PostgreSQL |
 | 7 | `users` | `CHECK ck_users_password_or_google` | Mencegah akun tanpa password **dan** tanpa Google (mustahil login) |
+| 8 | `users` | `failed_login_at` (lewat `003_add_failed_login_at.sql`) | PRD 3.B menuntut 5 gagal **dalam 15 menit**; counter tanpa penanda waktu tidak bisa mengukur jendela — kegagalan tersebar berhari-hari ikut terhitung |
 
 Tidak ada kolom PRD yang **dihapus**. Kolom `active_role_id` tidak dipasang karena sudah dihapus dari PRD v2.1.
 
@@ -144,7 +146,7 @@ Tidak ada kolom PRD yang **dihapus**. Kolom `active_role_id` tidak dipasang kare
 | Case username | **Case-sensitive** | Case-insensitive agar pengetikan username bebas kapitalisasi |
 | Format NISN | 10 digit angka (`^[0-9]{10}$`) | Rentang lebih longgar (`6–20` digit) |
 | Mapping role → fitur | **Tidak ada tabel `role_permissions`** — set role dibaca dari `user_roles`, pemetaan endpoint→role di kode BE | Tabel `role_permissions` untuk granularitas per izin |
-| Audit login gagal | Hanya counter di `users` (sesuai PRD) | Tabel `login_attempts` terpisah untuk riwayat percobaan login |
+| Audit login gagal | Hanya state terkini di `users`: counter + `failed_login_at` + `locked_until` (sesuai PRD) | Tabel `login_attempts` berisi tiap percobaan untuk riwayat login penuh |
 | `deleted_at` | Tidak dipakai — nonaktif = `is_active = false` | Soft delete untuk arsip baris |
 
 **Status akun (PRD Bagian 3.A):** hanya `active` / `inactive` — tidak ada status lain pada skema ini.
