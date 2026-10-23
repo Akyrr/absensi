@@ -5,8 +5,8 @@ Dokumen operasional: cara menjalankan skema, konvensi migrasi, dan backup/restor
 | Item | Nilai |
 |---|---|
 | DBMS | PostgreSQL (diuji pada PostgreSQL 18.6 / Windows) |
-| File DDL | [`001_epic1_auth.sql`](./001_epic1_auth.sql) (skema Epic 1) · [`002_access_and_encoding.sql`](./002_access_and_encoding.sql) (akses team + encoding) · [`003_add_failed_login_at.sql`](./003_add_failed_login_at.sql) (jendela lockout 15 menit) |
-| Backup | [`absensi.dump`](./absensi.dump) (snapshot skema + seed) |
+| File DDL | [`001_epic1_auth.sql`](./sql/001_epic1_auth.sql) (skema Epic 1) · [`002_access_and_encoding.sql`](./sql/002_access_and_encoding.sql) (akses team + encoding) · [`003_add_failed_login_at.sql`](./sql/003_add_failed_login_at.sql) (jendela lockout 15 menit) · [`004_epic2_user_role_management.sql`](./sql/004_epic2_user_role_management.sql) (Epic 2: kolom status nonaktif, metadata role, RBAC permissions) |
+| Backup | [`absensi.dump`](./dump/absensi.dump) (snapshot skema + seed) |
 | Info/Desain | [DESAIN.md](./DESAIN.md) |
 
 ## Cara menjalankan
@@ -16,15 +16,18 @@ Dokumen operasional: cara menjalankan skema, konvensi migrasi, dan backup/restor
 Buat database dengan encoding UTF8, lalu jalankan **semua** file `.sql` **berurutan dari `001`**:
 
 ```powershell
-psql -U user lu -d absensi -v ON_ERROR_STOP=1 -f database\001_epic1_auth.sql
-psql -U user lu -d absensi -v ON_ERROR_STOP=1 -f database\002_access_and_encoding.sql
-psql -U user lu -d absensi -v ON_ERROR_STOP=1 -f database\003_add_failed_login_at.sql
+psql -U user lu -d absensi -v ON_ERROR_STOP=1 -f database\sql\001_epic1_auth.sql
+psql -U user lu -d absensi -v ON_ERROR_STOP=1 -f database\sql\002_access_and_encoding.sql
+psql -U user lu -d absensi -v ON_ERROR_STOP=1 -f database\sql\003_add_failed_login_at.sql
+psql -U user lu -d absensi -v ON_ERROR_STOP=1 -f database\sql\004_epic2_user_role_management.sql
 ```
 
 Cek hasilnya:
 
 ```sql
-SELECT count(*) FROM roles;   -- 7 (seed)
+SELECT count(*) FROM roles;             -- 7 (seed)
+SELECT count(*) FROM permissions;       -- 7 (permission Epic 2)
+SELECT count(*) FROM role_permissions;  -- 7 (semua milik role admin)
 ```
 
 ### DB yang sudah berjalan
@@ -33,13 +36,13 @@ Jalankan **hanya file migrasi terbaru** yang belum pernah dijalankan pada DB ter
 
 ```powershell
 # ganti NNN_keterangan.sql dengan nama file migrasi terbaru
-psql -U user lu -d absensi -v ON_ERROR_STOP=1 -f database\NNN_keterangan.sql
+psql -U user lu -d absensi -v ON_ERROR_STOP=1 -f database\sql\NNN_keterangan.sql
 ```
 
 ### Reset lingkungan dev
 
 ```sql
-DROP TABLE sessions, otp_codes, user_roles, users, roles CASCADE;
+DROP TABLE IF EXISTS role_permissions, permissions, sessions, otp_codes, user_roles, users, roles CASCADE;
 ```
 
 Setelah DROP, DB kembali seperti baru — jalankan ulang **semua** file dari `001`.
@@ -51,27 +54,31 @@ Setelah DROP, DB kembali seperti baru — jalankan ulang **semua** file dari `00
 | Aturan | Rincian |
 |---|---|
 | Penamaan | `NNN_keterangan.sql` berurutan — `003_...`, `004_...`, dst. Nama mencerminkan perubahan |
-| Source of truth | **File SQL** — setiap perubahan skema = **file baru**. File yang sudah pernah dijalankan bersifat **final**: tidak diedit lagi, perbaikan apa pun pun = file migrasi berikutnya |
+| Source of truth | **File SQL** — setiap perubahan skema = **file baru**. File yang sudah pernah dijalankan bersifat **final**: tidak diedit lagi, perbaikan apa pun = file migrasi berikutnya |
 | Urutan | File dijalankan menaik (`001` → `002` → `003` → ...). Jangan pernah menyisipkan nomor di tengah |
 | Isi file | Keterangan perubahan (komentar) → DDL → `COMMENT ON ...` sinkron ke DB |
 | Transaksi | Dibungkus `BEGIN;` ... `COMMIT;` |
 | Idempotent | Aman dijalankan berulang pada DB dengan status apa pun |
 | Encoding | **Murni ASCII** — tidak boleh memuat `→`, `—`, atau emoji agar aman di koneksi encoding apa pun |
 
+### Proses penambahan permission (Epic 3+)
+
+Setiap epic baru **wajib menambahkan permission modulnya** ke tabel `permissions` + pemberiannya ke `role_permissions` lewat file migrasi masing-masing (contoh: `004` menambahkan 7 permission Epic 2, semuanya untuk role `admin`). FK ke `users.id` pada tabel epic berikutnya juga wajib `ON DELETE RESTRICT` (dibutuhkan F2.6 — akun hanya boleh dihapus tanpa riwayat).
+
 ## Berbagi database (dump & restore)
 
-Menyalin database **beserta isinya** ke mesin lain memakai `pg_dump` format custom. Untuk setup dari nol (skema + seed saja), kirim **seluruh file `.sql` di folder ini** — penerimanya cukup ikut bagian *Cara menjalankan*.
+Menyalin database **beserta isinya** ke mesin lain memakai `pg_dump` format custom. Untuk setup dari nol (skema + seed saja), kirim **seluruh file `.sql` di folder [`sql/`](./sql/)** — penerimanya cukup ikut bagian *Cara menjalankan*.
 
 ### Membuat dump
 
 ```powershell
-pg_dump -U user lu -Fc --no-owner -f database\absensi.dump absensi
+pg_dump -U user lu -Fc --no-owner -f database\dump\absensi.dump absensi
 ```
 
 | Opsi | Fungsi |
 |---|---|
 | `-Fc` | format custom terkompresi; direstore dengan `pg_restore` |
-| `--no-owner` | objek dimiliki oleh role yang me-restore — tidak bergantung pada role `akyrr` |
+| `--no-owner` | objek dimiliki oleh role yang me-restore — tidak bergantung pada role pembuat |
 | tanpa `--no-privileges` | grant `PUBLIC` ikut terbawa (lihat [DESAIN.md](./DESAIN.md) bagian 6.2) |
 
 Dump dibuat tanpa referensi role tertentu, sehingga aman direstore di cluster mana pun. `pg_dumpall --globals-only` **tidak** dipakai untuk dibagikan karena file tersebut memuat hash password seluruh role cluster.
@@ -88,7 +95,7 @@ createdb -U <user> -E UTF8 absensi
 pg_restore -U <user> --no-owner -d absensi absensi.dump
 
 # 3. Terapkan akses & encoding (002 idempotent, aman dijalankan berulang)
-psql -U <user> -d absensi -v ON_ERROR_STOP=1 -f 002_access_and_encoding.sql
+psql -U <user> -d absensi -v ON_ERROR_STOP=1 -f database\sql\002_access_and_encoding.sql
 ```
 
 Dua catatan operasional:
@@ -101,6 +108,8 @@ Dua catatan operasional:
 ```sql
 SHOW client_encoding;                 -- UTF8
 SELECT count(*) FROM roles;           -- 7 (seed ikut terdump)
+SELECT count(*) FROM permissions;     -- 7 (seed permission Epic 2 ikut terdump)
+SELECT count(*) FROM role_permissions; -- 7
 SELECT count(*) FROM users;           -- 0 (atau sesuai isi saat dump dibuat)
 SELECT count(*) FROM pg_default_acl;  -- 2 baris, milik role penerima
 SELECT current_user;                  -- role yang me-restore
