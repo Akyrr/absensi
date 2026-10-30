@@ -7,7 +7,7 @@ Cara menjalankan skema, konvensi migrasi, dan backup/restore ada di [README.md](
 | Item | Nilai |
 |---|---|
 | DBMS | PostgreSQL (diuji pada PostgreSQL 18.6 / Windows) |
-| File DDL | [`001_epic1_auth.sql`](./sql/001_epic1_auth.sql) (skema Epic 1) · [`002_access_and_encoding.sql`](./sql/002_access_and_encoding.sql) (akses team + encoding) · [`003_add_failed_login_at.sql`](./sql/003_add_failed_login_at.sql) (jendela lockout 15 menit) · [`004_epic2_user_role_management.sql`](./sql/004_epic2_user_role_management.sql) (Epic 2: status nonaktif, metadata role, RBAC) |
+| File DDL | [`001_epic1_auth.sql`](./sql/001_epic1_auth.sql) (skema Epic 1) · [`002_access_and_encoding.sql`](./sql/002_access_and_encoding.sql) (akses team + encoding) · [`003_add_failed_login_at.sql`](./sql/003_add_failed_login_at.sql) (jendela lockout 15 menit) · [`004_epic2_user_role_management.sql`](./sql/004_epic2_user_role_management.sql) (Epic 2: status nonaktif, metadata role, RBAC) · [`005_otp_length_comment.sql`](./sql/005_otp_length_comment.sql) (komentar OTP 6 karakter) |
 | Sumber requirement | `PRD Utama.docx` (revisi 3) + `PRD EPIC 1.docx` (v2.1) + `PRD EPIC 2.docx` (v1.0) |
 | Tabel | `roles`, `users`, `user_roles`, `otp_codes`, `sessions` (Epic 1) · `permissions`, `role_permissions` (Epic 2) |
 
@@ -124,7 +124,7 @@ Metadata Epic 2 (`004`): `label` (nama tampilan UI), `category` (`staff`/`studen
 
 ### `otp_codes` — dipakai F1.4 (ganti) & F1.5 (reset)
 - `purpose` di-`CHECK` hanya `change_password` / `reset_password` → isolasi purpose tereksekusi di level DB.
-- `code_hash` — OTP tidak pernah disimpan plaintext.
+- `code_hash` — OTP **6 karakter** (huruf besar + angka, tanpa karakter ambigu) tidak pernah disimpan plaintext. Komentar tabel disinkronkan lewat `005_otp_length_comment.sql`.
 - `last_sent_at` — dasar cooldown resend (60 detik) & batas 5 resend/jam.
 - `attempt_count` — maksimal 5 percobaan salah per kode; melebihi batas itu kode dianggap tidak valid.
 - `is_used` — sekali pakai; resend baru = tandai baris lama `is_used = true` (hanya 1 OTP aktif per user per purpose).
