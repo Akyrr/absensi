@@ -5,7 +5,7 @@ Dokumen operasional: cara menjalankan skema, konvensi migrasi, dan backup/restor
 | Item | Nilai |
 |---|---|
 | DBMS | PostgreSQL (diuji pada PostgreSQL 18.6 / Windows) |
-| File DDL | [`001_epic1_auth.sql`](./sql/001_epic1_auth.sql) (skema Epic 1) · [`002_access_and_encoding.sql`](./sql/002_access_and_encoding.sql) (akses team + encoding) · [`003_add_failed_login_at.sql`](./sql/003_add_failed_login_at.sql) (jendela lockout 15 menit) · [`004_epic2_user_role_management.sql`](./sql/004_epic2_user_role_management.sql) (Epic 2: kolom status nonaktif, metadata role, RBAC permissions) |
+| Folder DDL | [`sql/`](./sql) — migrasi `NNN_keterangan.sql`, dijalankan berurutan dari `001` |
 | Backup | [`absensi.dump`](./dump/absensi.dump) (snapshot skema + seed) |
 | Info/Desain | [DESAIN.md](./DESAIN.md) |
 
@@ -13,21 +13,23 @@ Dokumen operasional: cara menjalankan skema, konvensi migrasi, dan backup/restor
 
 ### DB baru (setup dari nol)
 
-Buat database dengan encoding UTF8, lalu jalankan **semua** file `.sql` **berurutan dari `001`**:
+Buat database dengan encoding UTF8, lalu jalankan **seluruh** migrasi di `database\sql\` — urutannya dijamin nama file `NNN_...` (zero-padded), jadi perintah tidak perlu diubah saat ada file baru:
 
 ```powershell
-psql -U user lu -d absensi -v ON_ERROR_STOP=1 -f database\sql\001_epic1_auth.sql
-psql -U user lu -d absensi -v ON_ERROR_STOP=1 -f database\sql\002_access_and_encoding.sql
-psql -U user lu -d absensi -v ON_ERROR_STOP=1 -f database\sql\003_add_failed_login_at.sql
-psql -U user lu -d absensi -v ON_ERROR_STOP=1 -f database\sql\004_epic2_user_role_management.sql
+createdb -U user lu -E UTF8 absensi
+
+Get-ChildItem database\sql\*.sql | Sort-Object Name | ForEach-Object {
+    Write-Host "==> $($_.Name)"
+    psql -U user lu -d absensi -v ON_ERROR_STOP=1 -f $_.FullName
+    if ($LASTEXITCODE -ne 0) { throw "Gagal di $($_.Name)" }
+}
 ```
 
 Cek hasilnya:
 
 ```sql
-SELECT count(*) FROM roles;             -- 7 (seed)
-SELECT count(*) FROM permissions;       -- 7 (permission Epic 2)
-SELECT count(*) FROM role_permissions;  -- 7 (semua milik role admin)
+SELECT count(*) FROM roles;                          -- 7 (seed tetap)
+SELECT code, module FROM permissions ORDER BY code;  -- daftar izin yang aktif
 ```
 
 ### DB yang sudah berjalan
@@ -38,14 +40,6 @@ Jalankan **hanya file migrasi terbaru** yang belum pernah dijalankan pada DB ter
 # ganti NNN_keterangan.sql dengan nama file migrasi terbaru
 psql -U user lu -d absensi -v ON_ERROR_STOP=1 -f database\sql\NNN_keterangan.sql
 ```
-
-### Reset lingkungan dev
-
-```sql
-DROP TABLE IF EXISTS role_permissions, permissions, sessions, otp_codes, user_roles, users, roles CASCADE;
-```
-
-Setelah DROP, DB kembali seperti baru — jalankan ulang **semua** file dari `001`.
 
 **Idempotensi:** seluruh file `.sql` **aman dijalankan berulang** (`CREATE ... IF NOT EXISTS`, seed `ON CONFLICT DO NOTHING`, `GRANT`/`ALTER` tidak error bila sudah terpenuhi).
 
@@ -83,7 +77,9 @@ pg_dump -U user lu -Fc --no-owner -f database\dump\absensi.dump absensi
 
 Dump dibuat tanpa referensi role tertentu, sehingga aman direstore di cluster mana pun. `pg_dumpall --globals-only` **tidak** dipakai untuk dibagikan karena file tersebut memuat hash password seluruh role cluster.
 
-### Restore di mesin penerima
+### Restore dump (bila menerima `absensi.dump`)
+
+Dipakai bila kamu menerima file `absensi.dump` dari tim/QA (snapshot skema + data). Untuk DB kosong yang dibangun dari file SQL, lewati bagian ini.
 
 Prasyarat: PostgreSQL terpasang, versi `pg_dump`/`pg_restore` di mesin penerima sama atau lebih baru.
 
@@ -107,10 +103,9 @@ Dua catatan operasional:
 
 ```sql
 SHOW client_encoding;                 -- UTF8
-SELECT count(*) FROM roles;           -- 7 (seed ikut terdump)
-SELECT count(*) FROM permissions;     -- 7 (seed permission Epic 2 ikut terdump)
-SELECT count(*) FROM role_permissions; -- 7
-SELECT count(*) FROM users;           -- 0 (atau sesuai isi saat dump dibuat)
+SELECT count(*) FROM roles;           -- 7 (seed tetap)
+SELECT code, module FROM permissions ORDER BY code;  -- izin yang ikut dump
+SELECT count(*) FROM users;           -- sesuai isi saat dump dibuat
 SELECT count(*) FROM pg_default_acl;  -- 2 baris, milik role penerima
 SELECT current_user;                  -- role yang me-restore
 ```
