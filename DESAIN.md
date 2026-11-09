@@ -7,9 +7,9 @@ Cara menjalankan skema, konvensi migrasi, dan backup/restore ada di [README.md](
 | Item | Nilai |
 |---|---|
 | DBMS | PostgreSQL (diuji pada PostgreSQL 18.6 / Windows) |
-| File DDL | [`001_epic1_auth.sql`](./sql/001_epic1_auth.sql) (skema Epic 1) · [`002_access_and_encoding.sql`](./sql/002_access_and_encoding.sql) (akses team + encoding) · [`003_add_failed_login_at.sql`](./sql/003_add_failed_login_at.sql) (jendela lockout 15 menit) · [`004_epic2_user_role_management.sql`](./sql/004_epic2_user_role_management.sql) (Epic 2: status nonaktif, metadata role, RBAC) · [`005_otp_length_comment.sql`](./sql/005_otp_length_comment.sql) (komentar OTP 6 karakter) |
-| Sumber requirement | `PRD Utama.docx` (revisi 3) + `PRD EPIC 1.docx` (v2.1) + `PRD EPIC 2.docx` (v1.0) |
-| Tabel | `roles`, `users`, `user_roles`, `otp_codes`, `sessions` (Epic 1) · `permissions`, `role_permissions` (Epic 2) |
+| File DDL | [`001_epic1_auth.sql`](./sql/001_epic1_auth.sql) (skema Epic 1) · [`002_access_and_encoding.sql`](./sql/002_access_and_encoding.sql) (akses team + encoding) · [`003_add_failed_login_at.sql`](./sql/003_add_failed_login_at.sql) (jendela lockout 15 menit) · [`004_epic2_user_role_management.sql`](./sql/004_epic2_user_role_management.sql) (Epic 2: status nonaktif, metadata role, RBAC) · [`005_otp_length_comment.sql`](./sql/005_otp_length_comment.sql) (komentar OTP 6 karakter) · [`006_drop_username_format_check.sql`](./sql/006_drop_username_format_check.sql) (cabut CHECK format username Epic 2) · [`007_activity_logs.sql`](./sql/007_activity_logs.sql) (fondasi log aktivitas Epic 13) · [`008_add_archived_at.sql`](./sql/008_add_archived_at.sql) (`users.archived_at`) |
+| Sumber requirement | `PRD Utama.docx` (revisi 3) + `PRD EPIC 1.docx` (v2.1) + `PRD EPIC 2.docx` (v1.0). **Catatan:** backend menyebut PRD Epic 2 v1.3, tetapi file v1.3 belum ada di workspace; `archived_at` dan tabel `activity_logs` ditambahkan berdasarkan kebutuhan backend + kesepakatan tim, bukan kutipan v1.3 |
+| Tabel | `roles`, `users`, `user_roles`, `otp_codes`, `sessions` (Epic 1) · `permissions`, `role_permissions` (Epic 2) · `activity_logs` (fondasi Epic 13, dibuat di Epic 2) |
 
 ## 1. ERD
 
@@ -36,7 +36,7 @@ erDiagram
         bigint id PK
         varchar name
         varchar email UK "lowercase, login + OTP"
-        varchar username UK "opsional, format 3-30 lowercase"
+        varchar username UK "opsional, login Epic 1; format Epic 2 ditunda"
         varchar password_hash "nullable (akun Google / staf tanpa kredensial)"
         varchar nisn UK "10 digit, hanya siswa"
         varchar google_id UK "opsional"
@@ -44,6 +44,7 @@ erDiagram
         boolean is_active "true/false saja"
         varchar inactive_reason "F2.4: graduated|transferred|other"
         timestamptz deactivated_at "F2.4"
+        timestamptz archived_at "pengarsipan; hanya saat nonaktif"
         smallint failed_login_attempts "lockout 5x/15 menit"
         timestamptz failed_login_at "gagal terakhir, jendela 15 menit"
         timestamptz locked_until
@@ -95,6 +96,20 @@ erDiagram
         smallint role_id PK,FK
         bigint permission_id PK,FK
     }
+
+    activity_logs {
+        bigint id PK
+        bigint actor_user_id "tanpa FK; NULL = sistem"
+        bigint target_user_id "tanpa FK; tetap ada setelah akun dihapus"
+        varchar action "kode event kanonik Epic 2"
+        jsonb snapshot "aman; tanpa data sensitif"
+        timestamptz created_at
+    }
+
+    note right of activity_logs
+        Tanpa FK (actor & target tidak di-relasikan)
+        agar log tetap utuh setelah akun dihapus
+    end note
 ```
 
 ## 2. Ringkasan per tabel
@@ -113,8 +128,9 @@ Metadata Epic 2 (`004`): `label` (nama tampilan UI), `category` (`staff`/`studen
 - Kolom lockout (3): `failed_login_attempts` (counter), `failed_login_at` (waktu kegagalan terakhir — dasar jendela 15 menit), `locked_until` (hasil kunci). Counter direset bila jeda sejak `failed_login_at` melebihi 15 menit, sehingga "5 gagal dalam 15 menit -> kunci 15 menit" sesuai PRD Bagian 3.B; kegagalan yang tersebar berhari-hari tidak ikut mengakumulasi. `NULL` pada `failed_login_at` = belum pernah gagal atau baru direset.
 - `is_active` boolean — **hanya 2 status akun** (tidak ada pending/locked permanen, PRD Bagian 3.A).
 - Kolom status nonaktif (Epic 2 F2.4): `inactive_reason` (`graduated` lulus / `transferred` pindah / `other` lainnya) + `deactivated_at`. `CHECK ck_users_inactive_state` menegakkan konsistensi dua arah: aktif = keduanya `NULL`; nonaktif = keduanya terisi.
-- `username` berformat `^[a-z0-9._]{3,30}$` (`ck_users_username_format`, PRD Epic 2 Bagian 7.C).
-- Tidak ada kolom `deleted_at` — penonaktifan = `is_active = false` (+ alasan & waktu).
+- `archived_at` (lewat `008`) — waktu akun diarsipkan; `NULL` = belum diarsipkan. `CHECK ck_users_archived_state` mewajibkan `is_active = false` bila kolom ini terisi. Mengisi `archived_at` wajib disertai `inactive_reason` + `deactivated_at` (dituntut `ck_users_inactive_state`), dan **wajib dikosongkan saat akun diaktifkan kembali**. Partial index `ix_users_archived` hanya memuat baris terarsip.
+- `username` tetap ada dan **unik** (`uq_users_username`) karena Epic 1 memakai username untuk login/registrasi. CHECK format Epic 2 (`ck_users_username_format`) **dicabut di `006`**: aturan format masih ditunda sampai PRD Epic 2 final, sementara Epic 1 menerima 3–50 karakter case-sensitive. Bila format final, pasang kembali lewat migrasi baru.
+- Tidak ada kolom `deleted_at` — penonaktifan = `is_active = false` (+ alasan & waktu); pengarsipan = `archived_at`.
 - Index `ix_users_name` untuk pencarian daftar akun (F2.1). Pencarian `contains` (`%q%`) tidak memakai index btree; bila terbukti lambat, solusinya migrasi terpisah dengan `pg_trgm` (GIN) — tidak dicampur di `004` agar dump tidak bergantung pada extension.
 
 ### `user_roles` — kunci fitur F1.8 (union)
@@ -145,6 +161,16 @@ PK gabungan `(role_id, permission_id)`; `role_id` FK **ON DELETE RESTRICT** (rol
 
 Matriks bersifat **baku** (PRD Bagian 11): pemberian izin diubah lewat migrasi/seeder, **tidak** lewat UI. Seluruh 7 permission Epic 2 diberikan ke `admin` saja. Epic berikutnya menambahkan permission modulnya sendiri ke kedua tabel ini.
 
+### `activity_logs` — fondasi log aktivitas (dibuat di Epic 2, dimiliki Epic 13)
+Tabel ini dibuat lebih awal karena AC Epic 2 menuntut setiap operasi CUD menghasilkan event yang bisa diperiksa. **Kepemilikan tetap Epic 13**: epic tersebut menambah kolom/fitur tampilan & filter, bukan membuat ulang tabel.
+
+- `actor_user_id` — pelaku operasi (id `users`); `NULL` berarti pelaku sistem/proses otomatis. **Tanpa FK** agar id pelaku tetap tersimpan walau akunnya dihapus.
+- `target_user_id` — akun yang menjadi target; **tanpa FK** agar log & snapshot tetap utuh setelah akun target dihapus permanen.
+- `action` — kode event kanonik Epic 2 (7): `ACCOUNT_CREATED`, `ACCOUNT_UPDATED`, `ACCOUNT_DEACTIVATED`, `ACCOUNT_ACTIVATED`, `ROLE_ASSIGNED`, `ROLE_REVOKED`, `ACCOUNT_DELETED`. **Tanpa CHECK** — epic berikutnya menambah kode sendiri tanpa migrasi.
+- `snapshot` — snapshot/diff aman untuk audit. **Dilarang** memuat `password_hash`, `google_id`, token, atau OTP. Aturan ini tidak bisa ditegakkan DB, wajib diuji di Backend.
+- Index: `(target_user_id, created_at DESC)`, `(action, created_at DESC)`, `(actor_user_id, created_at DESC)`, dan `(created_at DESC)` untuk daftar kronologis.
+- Backend menulis log **dalam transaksi yang sama** dengan operasi CUD agar operasi sukses tidak kehilangan event.
+
 ### Trigger
 | Trigger | Fungsi |
 |---|---|
@@ -169,13 +195,15 @@ Baseline = tabel Bagian 8 PRD Epic 1 + Bagian 8 PRD Epic 2. Semua kolom PRD dipe
 | 8 | `users` | `failed_login_at` (lewat `003_add_failed_login_at.sql`) | PRD 3.B menuntut 5 gagal **dalam 15 menit**; counter tanpa penanda waktu tidak bisa mengukur jendela |
 | 9 | `users` | `inactive_reason`, `deactivated_at` + `CHECK ck_users_inactive_state` (lewat `004`) | F2.4 menuntut alasan & waktu penonaktifan tersimpan; CHECK menjaga konsistensi dua arah |
 | 10 | `roles` | `label`, `category`, `is_assignable` | F2.5: role assignable vs terkunci & validasi kombinasi (staff/student) dihitung dari DB |
-| 11 | `users` | `CHECK ck_users_username_format` | PRD 7.C: username 3-30 karakter huruf kecil/angka/titik/underscore |
+| 11 | `users` | `CHECK ck_users_username_format` dipasang di `004`, lalu **dicabut di `006`** | Unsur username Epic 2 masih ditunda. CHECK 3–30 lowercase bertentangan dengan Epic 1 (registrasi 3–50, case-sensitive); kolom & UNIQUE tetap dipertahankan untuk login |
 | 12 | `permissions`, `role_permissions` | 2 tabel baru | F2.7: Matriks Hak Akses baku + otorisasi permission-based |
 | 13 | `users` | index `ix_users_name` | Rekomendasi Bagian 8 untuk pencarian daftar akun (F2.1) |
+| 14 | `users` | `archived_at` + `CHECK ck_users_archived_state` + partial index (lewat `008`) | Kebutuhan model Backend Epic 2; kolom resmi untuk pengarsipan akun (siswa lulus). Hanya sah saat akun nonaktif, wajib dikosongkan saat reaktivasi |
+| 15 | `activity_logs` | 1 tabel baru + 4 index (lewat `007`) | AC Epic 2 menuntut event CUD tercatat. Tabel dimiliki Epic 13; dibuat sekarang sebagai fondasi, tanpa FK agar log tetap utuh setelah akun dihapus |
 
 Tidak ada kolom PRD yang **dihapus**. Kolom `active_role_id` tidak dipasang karena sudah dihapus dari PRD v2.1.
 
-Catatan lintas tim akibat #7 dan #11: Backend **tidak boleh lagi** mengandalkan `ck_users_password_or_google` (boleh membuat akun tanpa kredensial) dan **wajib** lowercase + validasi format username sebelum INSERT/UPDATE.
+Catatan lintas tim akibat #7 dan #11: Backend **tidak boleh lagi** mengandalkan `ck_users_password_or_google` (boleh membuat akun tanpa kredensial). Untuk username, Epic 2 **tidak boleh** mengandalkan format 3–30 lowercase di DB — validasi Epic 1 tetap 3–50 case-sensitive sampai aturan Epic 2 final.
 
 ## 4. Keputusan teknis
 
@@ -184,13 +212,14 @@ Catatan lintas tim akibat #7 dan #11: Backend **tidak boleh lagi** mengandalkan 
 | Tipe ID | `bigint GENERATED ALWAYS AS IDENTITY` | UUIDv7 bila butuh ID tak tertebak lintas sistem |
 | Enum (`purpose`, `inactive_reason`, `category`, `roles.name`) | `VARCHAR + CHECK/UNIQUE` (bukan `CREATE TYPE`) | `CREATE TYPE` — lebih ketat, tapi tiap perubahan = migration ekstra |
 | Kredensial awal akun staf (F2.2) | Tanpa password & tanpa Google (`NULL`/`NULL`); login pertama lewat link akun, Google, atau Reset Password | CHECK "minimal satu kredensial" (Epic 1) — tidak kompatibel dengan F2.2, sudah dihapus |
-| Case username | Penyimpanan case-**sensitive**, tapi format dicegah berkapital lewat CHECK Epic 2 (`^[a-z0-9._]{3,30}$`) | Case-insensitive unik (menolak `Budi` dan `budi` sekaligus) |
+| Case username | Penyimpanan case-**sensitive**, tanpa CHECK format (dicabut di `006`); aturan format Epic 2 ditunda sampai PRD final. Epic 1 tetap 3–50 karakter | Format Epic 2 `^[a-z0-9._]{3,30}$` dikunci di DB — ditolak karena meregresi registrasi Epic 1 |
 | Format NISN | 10 digit angka (`^[0-9]{10}$`) | Rentang lebih longgar (`6–20` digit) |
 | Otorisasi | **RBAC berbasis permission (Epic 2)**: tabel `permissions` + `role_permissions`, akses = union seluruh role akun, **default deny** di Backend; matriks baku disiapkan seeder | Tanpa tabel permission — pemetaan endpoint→role di kode BE (keputusan Epic 1, digantikan oleh PRD Epic 2) |
 | Audit login gagal | Hanya state terkini di `users`: counter + `failed_login_at` + `locked_until` (sesuai PRD) | Tabel `login_attempts` berisi tiap percobaan untuk riwayat login penuh |
-| `deleted_at` | Tidak dipakai — nonaktif = `is_active = false` (+ `inactive_reason`, `deactivated_at`) | Soft delete untuk arsip baris |
+| `deleted_at` | Tidak dipakai — nonaktif = `is_active = false` (+ `inactive_reason`, `deactivated_at`); arsip = `archived_at` | Soft delete untuk arsip baris |
+| `activity_logs` | Dibuat di Epic 2 sebagai fondasi Epic 13 (tanpa FK, tanpa CHECK `action`) | Menunggu Epic 13 — AC Epic 2 tidak bisa diverifikasi QA; atau logger file — event tidak bisa di-query |
 | Aturan kombinasi role & "minimal 1 Admin aktif" | Level aplikasi (transaksi + row lock) — kolom `category`/`is_assignable` menyediakan dasar data, tanpa trigger DB | Constraint trigger DB — kompleks, sulit diuji |
-| Pencarian daftar akun (F2.1) | Btree `users(name)` dulu (rekomendasi PRD) | `pg_trgm` GIN untuk `contains` — dipertimbangkan sebagai migrasi `005` bila terbukti lambat |
+| Pencarian daftar akun (F2.1) | Btree `users(name)` dulu (rekomendasi PRD) | `pg_trgm` GIN untuk `contains` — dipertimbangkan sebagai migrasi berikutnya bila terbukti lambat |
 
 **Status akun:** `active` / `inactive`, dengan alasan & waktu penonaktifan (Epic 2 F2.4). Tidak ada status lain.
 
@@ -236,7 +265,7 @@ erDiagram
     letter_uploads  { bigint id PK, bigint student_id FK, varchar letter_type, varchar file_url }
     teaching_journals { bigint id PK, bigint session_id FK, text materi, text description, boolean submitted }
     notifications   { bigint id PK, bigint user_id FK, text payload, boolean is_read }
-    activity_logs   { bigint id PK, bigint user_id FK, varchar action, timestamptz created_at }
+    activity_logs   { bigint id PK, bigint actor_user_id, bigint target_user_id, varchar action, jsonb snapshot, timestamptz created_at }
     roles           { smallint id PK, varchar name UK, varchar label, varchar category, boolean is_assignable }
     permissions     { bigint id PK, varchar code UK, varchar module }
     role_permissions { smallint role_id PK,FK, bigint permission_id PK,FK }
@@ -251,4 +280,4 @@ erDiagram
 5. **Jurnal terpisah dari absensi** — `teaching_journals` tetap ada meski `teacher_attendance.status = Tidak Hadir` (PRD KS-18), dengan flag `submitted` untuk menandai "Guru Mapel tidak mengisi jurnal".
 6. **Multi-role** — otorisasi seluruh modul dihitung dari union `user_roles`; tidak ada kolom "role aktif" di tabel mana pun.
 7. **FK ke `users.id` wajib `ON DELETE RESTRICT`** pada seluruh tabel epic berikutnya — F2.6 hanya mengizinkan penghapusan akun staf yang tidak punya riwayat; cascade hanya berlaku untuk tabel Epic 1 (`user_roles`, `sessions`, `otp_codes`).
-8. **`activity_logs`** dikerjakan di Epic 13 — Epic 2 baru menghasilkan event (ACCOUNT_CREATED, ROLE_ASSIGNED, dst.), sementara Backend menampungnya lewat abstraksi logger.
+8. **`activity_logs`** dimiliki Epic 13, tetapi tabelnya **dibuat di Epic 2** (`007`) sebagai fondasi agar event CUD bisa disimpan dan diverifikasi. Epic 2 menulis 7 event kanonik (`ACCOUNT_CREATED`, `ACCOUNT_UPDATED`, `ACCOUNT_DEACTIVATED`, `ACCOUNT_ACTIVATED`, `ROLE_ASSIGNED`, `ROLE_REVOKED`, `ACCOUNT_DELETED`) dalam transaksi yang sama dengan operasi CUD. Epic 13 menambah kolom/fitur tampilan & filter, bukan membuat ulang tabel. Tanpa FK agar log tetap utuh setelah akun pelaku/target dihapus.
