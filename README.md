@@ -57,7 +57,7 @@ psql -U user lu -d absensi -v ON_ERROR_STOP=1 -f database\sql\NNN_keterangan.sql
 
 ### Proses penambahan permission (Epic 3+)
 
-Setiap epic baru **wajib menambahkan permission modulnya** ke tabel `permissions` + pemberiannya ke `role_permissions` lewat file migrasi masing-masing (contoh: `004` menambahkan 7 permission Epic 2, semuanya untuk role `admin`). FK ke `users.id` pada tabel epic berikutnya juga wajib `ON DELETE RESTRICT` (dibutuhkan F2.6 — akun hanya boleh dihapus tanpa riwayat).
+Setiap epic baru **wajib menambahkan permission modulnya** ke tabel `permissions` + pemberiannya ke `role_permissions` lewat file migrasi masing-masing (contoh: `004` menambahkan 7 permission Epic 2; `017` menambahkan 23 permission Epic 3/4). FK ke `users.id` pada tabel epic berikutnya juga wajib `ON DELETE RESTRICT` (dibutuhkan F2.6 — akun hanya boleh dihapus tanpa riwayat).
 
 ## Berbagi database (dump & restore)
 

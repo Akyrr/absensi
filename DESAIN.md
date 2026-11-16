@@ -1,15 +1,15 @@
 # Desain Database — E-Absensi
 
-**Scope dokumen ini:** Epic 1 — *Authentication & Account Management* + Epic 2 — *User & Role Management* (detail, siap implementasi) + peta arsitektural seluruh sistem.
+**Scope dokumen ini:** Epic 1 — *Authentication & Account Management* + Epic 2 — *User & Role Management* + Epic 3 — *Master Data* + Epic 4 — *Jadwal* (detail, siap implementasi) + peta arsitektural seluruh sistem.
 
 Cara menjalankan skema, konvensi migrasi, dan backup/restore ada di [README.md](./README.md).
 
 | Item | Nilai |
 |---|---|
 | DBMS | PostgreSQL (diuji pada PostgreSQL 18.6 / Windows) |
-| File DDL | [`001_epic1_auth.sql`](./sql/001_epic1_auth.sql) (skema Epic 1) · [`002_access_and_encoding.sql`](./sql/002_access_and_encoding.sql) (akses team + encoding) · [`003_add_failed_login_at.sql`](./sql/003_add_failed_login_at.sql) (jendela lockout 15 menit) · [`004_epic2_user_role_management.sql`](./sql/004_epic2_user_role_management.sql) (Epic 2: status nonaktif, metadata role, RBAC) · [`005_otp_length_comment.sql`](./sql/005_otp_length_comment.sql) (komentar OTP 6 karakter) · [`006_drop_username_format_check.sql`](./sql/006_drop_username_format_check.sql) (cabut CHECK format username Epic 2) · [`007_activity_logs.sql`](./sql/007_activity_logs.sql) (fondasi log aktivitas Epic 13) · [`008_add_archived_at.sql`](./sql/008_add_archived_at.sql) (`users.archived_at`) |
-| Sumber requirement | `PRD Utama.docx` (revisi 3) + `PRD EPIC 1.docx` (v2.1) + `PRD EPIC 2.docx` (v1.0). **Catatan:** backend menyebut PRD Epic 2 v1.3, tetapi file v1.3 belum ada di workspace; `archived_at` dan tabel `activity_logs` ditambahkan berdasarkan kebutuhan backend + kesepakatan tim, bukan kutipan v1.3 |
-| Tabel | `roles`, `users`, `user_roles`, `otp_codes`, `sessions` (Epic 1) · `permissions`, `role_permissions` (Epic 2) · `activity_logs` (fondasi Epic 13, dibuat di Epic 2) |
+| File DDL | [`001_epic1_auth.sql`](./sql/001_epic1_auth.sql) (skema Epic 1) · [`002_access_and_encoding.sql`](./sql/002_access_and_encoding.sql) (akses team + encoding) · [`003_add_failed_login_at.sql`](./sql/003_add_failed_login_at.sql) (jendela lockout 15 menit) · [`004_epic2_user_role_management.sql`](./sql/004_epic2_user_role_management.sql) (Epic 2: status nonaktif, metadata role, RBAC) · [`005_otp_length_comment.sql`](./sql/005_otp_length_comment.sql) (komentar OTP 6 karakter) · [`006_drop_username_format_check.sql`](./sql/006_drop_username_format_check.sql) (cabut CHECK format username Epic 2) · [`007_activity_logs.sql`](./sql/007_activity_logs.sql) (fondasi log aktivitas Epic 13) · [`008_add_archived_at.sql`](./sql/008_add_archived_at.sql) (`users.archived_at`) · [`009_activity_logs_target.sql`](./sql/009_activity_logs_target.sql) (target generik log) · [`010_academic_years.sql`](./sql/010_academic_years.sql) (tahun ajaran) · [`011_subjects.sql`](./sql/011_subjects.sql) (mata pelajaran) · [`012_teachers.sql`](./sql/012_teachers.sql) (profil guru) · [`013_classes.sql`](./sql/013_classes.sql) (kelas) · [`014_students.sql`](./sql/014_students.sql) (profil siswa + sinkron NISN) · [`015_teacher_subjects.sql`](./sql/015_teacher_subjects.sql) (mapel guru) · [`016_schedules.sql`](./sql/016_schedules.sql) (jadwal) · [`017_permissions_epic3_epic4.sql`](./sql/017_permissions_epic3_epic4.sql) (permission Epic 3/4) · [`018_backfill_students.sql`](./sql/018_backfill_students.sql) (backfill profil siswa) |
+| Sumber requirement | `PRD Utama.docx` (revisi 3) + `PRD EPIC 1.docx` (v2.1) + `PRD EPIC 2.docx` (v1.0) + `PRD EPIC 3.docx` (v1.1) + `PRD EPIC 4.docx` (v1.0). **Catatan:** backend menyebut PRD Epic 2 v1.3, tetapi file v1.3 belum ada di workspace; `archived_at` dan tabel `activity_logs` ditambahkan berdasarkan kebutuhan backend + kesepakatan tim, bukan kutipan v1.3 |
+| Tabel | `roles`, `users`, `user_roles`, `otp_codes`, `sessions` (Epic 1) · `permissions`, `role_permissions` (Epic 2) · `activity_logs` (fondasi Epic 13, dibuat di Epic 2) · `academic_years`, `subjects`, `teachers`, `classes`, `students`, `teacher_subjects` (Epic 3) · `schedules` (Epic 4) |
 
 ## 1. ERD
 
@@ -21,6 +21,17 @@ erDiagram
     users ||--o{ sessions    : "login di"
     roles ||--o{ role_permissions : "diberi izin"
     permissions ||--o{ role_permissions : "dipakai oleh"
+    users ||--o| students : "profil siswa (Epic 3)"
+    users ||--o| teachers : "profil guru (Epic 3)"
+    users ||--o{ classes : "wali kelas (Epic 9)"
+    users ||--o{ schedules : "created_by"
+    academic_years ||--o{ classes : "memiliki"
+    classes ||--o{ students : "kelas saat ini"
+    teachers ||--o{ teacher_subjects : "mengampu"
+    subjects ||--o{ teacher_subjects : "diampu"
+    classes ||--o{ schedules : "dijadwalkan"
+    subjects ||--o{ schedules : "mapel"
+    teachers ||--o{ schedules : "pengampu"
 
     roles {
         smallint id PK
@@ -85,6 +96,70 @@ erDiagram
         timestamptz created_at
     }
 
+    academic_years {
+        bigint id PK
+        varchar name UK "contoh 2026/2027"
+        varchar active_semester "semester_1|semester_2"
+        date start_date
+        date end_date "nullable"
+        boolean is_active "maks 1 true"
+        timestamptz updated_at
+    }
+
+    subjects {
+        bigint id PK
+        varchar code UK
+        varchar name
+        boolean is_active
+        timestamptz updated_at
+    }
+
+    teachers {
+        bigint id PK
+        bigint user_id FK,UK
+        varchar nip
+        timestamptz updated_at
+    }
+
+    classes {
+        bigint id PK
+        varchar name "unik per tahun ajaran"
+        smallint grade_level "10|11|12"
+        bigint academic_year_id FK
+        bigint wali_kelas_user_id FK "nullable, Epic 9"
+        boolean is_active
+        timestamptz updated_at
+    }
+
+    students {
+        bigint id PK
+        bigint user_id FK,UK
+        varchar nisn UK "10 digit"
+        bigint class_id FK "nullable"
+        timestamptz updated_at
+    }
+
+    teacher_subjects {
+        bigint teacher_id PK,FK
+        bigint subject_id PK,FK
+        timestamptz created_at
+    }
+
+    schedules {
+        bigint id PK
+        date schedule_date
+        time start_time
+        time end_time
+        bigint class_id FK
+        bigint subject_id FK
+        bigint teacher_id FK
+        varchar schedule_type "pelajaran|kegiatan"
+        varchar activity_name "nullable"
+        bigint created_by FK
+        integer version "optimistic locking"
+        timestamptz updated_at
+    }
+
     permissions {
         bigint id PK
         varchar code UK "format module.action"
@@ -101,14 +176,16 @@ erDiagram
         bigint id PK
         bigint actor_user_id "tanpa FK; NULL = sistem"
         bigint target_user_id "tanpa FK; tetap ada setelah akun dihapus"
-        varchar action "kode event kanonik Epic 2"
+        varchar target_type "USER|CLASS|SUBJECT|..."
+        bigint target_id "tanpa FK; target generik"
+        varchar action "kode event kanonik"
         jsonb snapshot "aman; tanpa data sensitif"
         timestamptz created_at
     }
 
     note right of activity_logs
         Tanpa FK (actor & target tidak di-relasikan)
-        agar log tetap utuh setelah akun dihapus
+        agar log tetap utuh setelah target dihapus
     end note
 ```
 
@@ -169,19 +246,70 @@ Tabel ini dibuat lebih awal karena AC Epic 2 menuntut setiap operasi CUD menghas
 - `action` — kode event kanonik Epic 2 (7): `ACCOUNT_CREATED`, `ACCOUNT_UPDATED`, `ACCOUNT_DEACTIVATED`, `ACCOUNT_ACTIVATED`, `ROLE_ASSIGNED`, `ROLE_REVOKED`, `ACCOUNT_DELETED`. **Tanpa CHECK** — epic berikutnya menambah kode sendiri tanpa migrasi.
 - `snapshot` — snapshot/diff aman untuk audit. **Dilarang** memuat `password_hash`, `google_id`, token, atau OTP. Aturan ini tidak bisa ditegakkan DB, wajib diuji di Backend.
 - Index: `(target_user_id, created_at DESC)`, `(action, created_at DESC)`, `(actor_user_id, created_at DESC)`, dan `(created_at DESC)` untuk daftar kronologis.
+- `target_type` + `target_id` (lewat `009`) — target generik untuk event Epic 3/4: `USER`, `STUDENT`, `TEACHER`, `CLASS`, `SUBJECT`, `ACADEMIC_YEAR`, `SCHEDULE`. Keduanya **tanpa FK** dan tanpa CHECK agar tipe target bisa bertambah. Index `(target_type, target_id, created_at DESC)`.
 - Backend menulis log **dalam transaksi yang sama** dengan operasi CUD agar operasi sukses tidak kehilangan event.
+
+### Tabel Epic 3 — master data
+
+#### `academic_years` (010)
+- `name` unik; `active_semester` hanya `semester_1` / `semester_2`; `end_date` boleh `NULL` dan tidak boleh sebelum `start_date`.
+- Partial unique index `uq_academic_years_active` pada `is_active WHERE is_active` menjamin **maksimal satu tahun ajaran aktif**.
+- Aktivasi tahun baru harus satu transaksi dengan penonaktifan tahun lama. Unique violation diterjemahkan Backend menjadi 409.
+
+#### `subjects` (011)
+- `code` unik dan tidak boleh kosong; `name` tidak boleh kosong; `is_active` untuk nonaktifkan tanpa hapus.
+- Mapel yang sudah dipakai `teacher_subjects` atau `schedules` tidak bisa dihapus (FK RESTRICT).
+
+#### `teachers` (012)
+- `user_id` unik + FK `users.id` **ON DELETE RESTRICT**; satu akun guru hanya punya satu profil.
+- `nip` wajib, tidak harus unik. Validasi role `guru_mapel` dilakukan Backend karena role ada di `user_roles`.
+
+#### `classes` (013)
+- `UNIQUE(name, academic_year_id)`; `grade_level` hanya 10/11/12; `academic_year_id` FK RESTRICT.
+- `wali_kelas_user_id` menunjuk `users.id`, nullable, FK SET NULL; pengisian menjadi kewenangan Epic 9 (read-only di Epic 3).
+- `is_active` untuk nonaktifkan; hapus permanen hanya jika belum dipakai `students.class_id` atau `schedules`.
+
+#### `students` (014)
+- `user_id` unik + FK `users.id` **ON DELETE RESTRICT**; `nisn` unik, 10 digit, wajib.
+- `class_id` nullable (`NULL` = Tanpa Kelas), FK RESTRICT. Riwayat kelas belum dimodelkan; akan ditangani Epic 9/10.
+- Trigger `fn_sync_students_users_nisn` menyinkronkan `students.nisn` dan `users.nisn` dua arah. `students.nisn` adalah acuan akademik; `users.nisn` tetap dipakai login/registrasi Epic 1.
+- Backfill `018` membuat profil untuk akun ber-role `siswa` yang sudah punya NISN. Registrasi baru wajib membuat `students` dalam transaksi yang sama (perubahan Backend).
+
+#### `teacher_subjects` (015)
+- PK gabungan `(teacher_id, subject_id)`; FK `teacher_id` CASCADE, `subject_id` RESTRICT.
+- CASCADE pada guru tetap tertahan `schedules.teacher_id` (RESTRICT) bila guru sudah punya jadwal.
+
+### Tabel Epic 4 — jadwal
+
+#### `schedules` (016)
+- Satu baris = satu kejadian pada `schedule_date` tertentu (bukan pola mingguan).
+- Kolom: `schedule_date`, `start_time`, `end_time`, `class_id`, `subject_id`, `teacher_id`, `schedule_type` (`pelajaran`/`kegiatan`), `activity_name`, `created_by`, `version`, `updated_at`.
+- `UNIQUE(class_id, schedule_date, start_time)` mencegah slot kelas ganda; `UNIQUE(teacher_id, schedule_date, start_time)` mencegah guru mengajar dua kelas pada jam mulai yang sama.
+- Exclusion constraint `ex_schedules_class_overlap` dan `ex_schedules_teacher_overlap` menolak slot yang **bertumpuk** (bukan hanya jam mulai identik), memakai `tsrange(schedule_date + start_time, schedule_date + end_time)` dan `btree_gist`.
+- `CHECK ck_schedules_activity`: tipe `pelajaran` wajib `activity_name NULL`; tipe `kegiatan` wajib nama tidak kosong.
+- **Deviasi:** `subject_id` tetap `NOT NULL` saat kegiatan agar jurnal tetap punya mapel. Nama kegiatan hanya untuk tampilan.
+- `version` naik otomatis lewat `trg_schedules_bump_version`; Backend memakai `WHERE id = ? AND version = ?` dan mengembalikan 409 bila 0 baris.
+- Semua FK ke `classes`/`subjects`/`teachers` RESTRICT; `created_by` SET NULL.
+
+### Permission Epic 3/4 (017)
+- 23 permission baru: 17 Epic 3 (`student.*`, `teacher.*`, `class.*`, `subject.*`, `academic_year.*`) + 6 Epic 4 (`schedule.*`).
+- Grant mengikuti matriks PRD; total permission menjadi 30 dan `role_permissions` menjadi 61 pada database bersih.
 
 ### Trigger
 | Trigger | Fungsi |
 |---|---|
 | `trg_users_normalize` (BEFORE INSERT/UPDATE) | `lower(btrim(email))`, trim `username`/`nisn` — menjamin kepatuhan `CHECK email = lower(email)` |
 | `trg_users_updated_at` (BEFORE UPDATE) | auto-set `updated_at` — juga dasar optimistic locking F2.3 |
+| `trg_academic_years_updated_at`, `trg_subjects_updated_at`, `trg_teachers_updated_at`, `trg_classes_updated_at`, `trg_students_updated_at`, `trg_schedules_updated_at` (BEFORE UPDATE) | auto-set `updated_at` memakai `fn_set_updated_at` |
+| `trg_students_sync_nisn` (AFTER INSERT/UPDATE OF nisn) | sinkron `students.nisn` -> `users.nisn` |
+| `trg_users_sync_nisn` (AFTER UPDATE OF nisn) | sinkron `users.nisn` -> `students.nisn`; guard `IS DISTINCT FROM` mencegah rekursi |
+| `trg_schedules_bump_version` (BEFORE UPDATE) | `version := version + 1` untuk optimistic locking jadwal |
 
 ---
 
 ## 3. Deviasi / penambahan dari PRD
 
-Baseline = tabel Bagian 8 PRD Epic 1 + Bagian 8 PRD Epic 2. Semua kolom PRD dipertahankan; berikut **tambahan & perubahan**:
+Baseline = tabel Bagian 8 PRD Epic 1 + Bagian 8 PRD Epic 2 + Bagian 6 PRD Epic 3 + Bagian 6 PRD Epic 4. Semua kolom PRD dipertahankan; berikut **tambahan & perubahan**:
 
 | # | Tabel | Tambahan / Perubahan | Alasan |
 |---|---|---|---|
@@ -200,6 +328,12 @@ Baseline = tabel Bagian 8 PRD Epic 1 + Bagian 8 PRD Epic 2. Semua kolom PRD dipe
 | 13 | `users` | index `ix_users_name` | Rekomendasi Bagian 8 untuk pencarian daftar akun (F2.1) |
 | 14 | `users` | `archived_at` + `CHECK ck_users_archived_state` + partial index (lewat `008`) | Kebutuhan model Backend Epic 2; kolom resmi untuk pengarsipan akun (siswa lulus). Hanya sah saat akun nonaktif, wajib dikosongkan saat reaktivasi |
 | 15 | `activity_logs` | 1 tabel baru + 4 index (lewat `007`) | AC Epic 2 menuntut event CUD tercatat. Tabel dimiliki Epic 13; dibuat sekarang sebagai fondasi, tanpa FK agar log tetap utuh setelah akun dihapus |
+| 16 | `activity_logs` | `target_type`, `target_id`, index target generik (lewat `009`) | Event Epic 3/4 menargetkan kelas/mapel/tahun ajaran/jadwal, bukan hanya akun |
+| 17 | `students`, `teachers` | FK `user_id` **ON DELETE RESTRICT** (PRD Epic 3 menulis CASCADE) | Profil tidak boleh hilang diam-diam; akun hanya dihapus bila tanpa riwayat. Riwayat tetap ditahan FK schedules/absensi |
+| 18 | `students` | Trigger sinkron `students.nisn` <-> `users.nisn` | PRD menyimpan NISN di dua tempat; trigger mencegah drift tanpa mengubah alur login Epic 1 |
+| 19 | `schedules` | `subject_id` tetap **NOT NULL** saat `schedule_type = 'kegiatan'` (PRD menyebut nullable) | Jurnal Epic 7 tetap membutuhkan mapel; `activity_name` hanya mengganti tampilan |
+| 20 | `schedules` | `UNIQUE(teacher_id, schedule_date, start_time)`, exclusion constraint slot bertumpuk, kolom `version` + trigger | PRD hanya mengunci slot kelas; guru double-booking dan lost update tetap mungkin tanpa pengaman ini |
+| 21 | `permissions`/`role_permissions` | 23 permission Epic 3/4 + grant matriks (lewat `017`) | Setiap epic wajib menambahkan permission modulnya sendiri |
 
 Tidak ada kolom PRD yang **dihapus**. Kolom `active_role_id` tidak dipasang karena sudah dihapus dari PRD v2.1.
 
@@ -220,6 +354,14 @@ Catatan lintas tim akibat #7 dan #11: Backend **tidak boleh lagi** mengandalkan 
 | `activity_logs` | Dibuat di Epic 2 sebagai fondasi Epic 13 (tanpa FK, tanpa CHECK `action`) | Menunggu Epic 13 — AC Epic 2 tidak bisa diverifikasi QA; atau logger file — event tidak bisa di-query |
 | Aturan kombinasi role & "minimal 1 Admin aktif" | Level aplikasi (transaksi + row lock) — kolom `category`/`is_assignable` menyediakan dasar data, tanpa trigger DB | Constraint trigger DB — kompleks, sulit diuji |
 | Pencarian daftar akun (F2.1) | Btree `users(name)` dulu (rekomendasi PRD) | `pg_trgm` GIN untuk `contains` — dipertimbangkan sebagai migrasi berikutnya bila terbukti lambat |
+| Sumber NISN (Epic 3) | `students.nisn` = acuan akademik; `users.nisn` = kredensial login; trigger dua arah menjaga keduanya sama | Hanya `users.nisn` (menyimpang dari PRD) atau dua kolom tanpa sinkronisasi (rawan drift) |
+| Model kelas (Epic 3) | `students.class_id` saja; riwayat keanggotaan ditunda ke Epic 9/10 | `class_memberships` per tahun ajaran — lebih future-proof, tetapi menyimpang dari PRD dan menambah kompleksitas Epic 3/4 |
+| Tahun ajaran aktif | Partial unique index + transaksi aktivasi (Backend memakai row lock/unique violation) | Cek aplikasi saja — race condition dua tahun aktif |
+| Kegiatan sekolah (Epic 4) | Tetap pada baris `schedules` (`schedule_type`, `activity_name`); master kegiatan ditunda ke Epic 8 | Tabel `school_activities` sekarang — belum dibutuhkan Epic 4, tetapi Epic 8 perlu normalisasi |
+| Slot jadwal | Unique kelas + unique guru + exclusion constraint rentang waktu | Hanya unique kelas (PRD) — guru double-booking dan slot bertumpuk lolos |
+| Optimistic locking jadwal | Kolom `version` + trigger kenaikan otomatis; API membandingkan versi | `updated_at` saja — presisi lebih rendah dan rawan tabrakan jam server |
+| Mapel saat kegiatan | `subject_id` tetap terisi; `activity_name` untuk tampilan | `subject_id NULL` (PRD) — jurnal kehilangan mapel |
+| Zona waktu jadwal | Tanggal lokal + `time` tanpa zona; Backend menetapkan Asia/Jakarta | `timestamptz` untuk jam pelajaran — rawan bergeser saat konversi |
 
 **Status akun:** `active` / `inactive`, dengan alasan & waktu penonaktifan (Epic 2 F2.4). Tidak ada status lain.
 
@@ -234,8 +376,11 @@ erDiagram
     users ||--o| students           : "profil siswa"
     users ||--o| teachers           : "profil guru"
     academic_years ||--o{ classes   : "memiliki"
-    subjects ||--o{ schedules       : "diamparkan"
-    classes ||--o{ class_memberships : "berisi siswa"
+    subjects ||--o{ schedules       : "mapel jadwal"
+    teachers ||--o{ schedules       : "pengampu jadwal"
+    teachers ||--o{ teacher_subjects : "mengampu mapel"
+    subjects ||--o{ teacher_subjects : "diampu guru"
+    classes ||--o{ class_memberships : "berisi siswa (Epic 9/10)"
     students ||--o{ class_memberships : "anggota"
     classes ||--o{ class_officers   : "siswa inti"
     schedules ||--o{ attendance_sessions : "per tanggal"
@@ -255,8 +400,9 @@ erDiagram
     teachers        { bigint id PK, bigint user_id FK }
     class_memberships { bigint id PK, int class_id FK, bigint student_id FK }
     class_officers  { bigint id PK, int class_id FK, bigint student_id FK, varchar position }
-    schedules       { bigint id PK, date schedule_date, int period, int class_id, int subject_id, int teacher_id }
-    school_activities { bigint id PK, date activity_date, varchar name }
+    schedules       { bigint id PK, date schedule_date, time start_time, time end_time, bigint class_id FK, bigint subject_id FK, bigint teacher_id FK, varchar schedule_type, varchar activity_name, bigint created_by FK, int version }
+    teacher_subjects { bigint teacher_id PK,FK, bigint subject_id PK,FK }
+    school_activities { bigint id PK, date activity_date, varchar name "Epic 8" }
     attendance_sessions { bigint id PK, bigint schedule_id FK, date session_date, varchar status }
     qr_sessions     { bigint id PK, bigint session_id FK, varchar code, timestamptz expires_at, boolean is_used }
     teacher_attendance { bigint id PK, bigint session_id FK, int teacher_id, varchar status, int substitute_of }
@@ -265,7 +411,7 @@ erDiagram
     letter_uploads  { bigint id PK, bigint student_id FK, varchar letter_type, varchar file_url }
     teaching_journals { bigint id PK, bigint session_id FK, text materi, text description, boolean submitted }
     notifications   { bigint id PK, bigint user_id FK, text payload, boolean is_read }
-    activity_logs   { bigint id PK, bigint actor_user_id, bigint target_user_id, varchar action, jsonb snapshot, timestamptz created_at }
+    activity_logs   { bigint id PK, bigint actor_user_id, bigint target_user_id, varchar target_type, bigint target_id, varchar action, jsonb snapshot, timestamptz created_at }
     roles           { smallint id PK, varchar name UK, varchar label, varchar category, boolean is_assignable }
     permissions     { bigint id PK, varchar code UK, varchar module }
     role_permissions { smallint role_id PK,FK, bigint permission_id PK,FK }
@@ -273,11 +419,12 @@ erDiagram
 
 ### Catatan arsitektural
 
-1. **`users` vs `students`/`teachers`** — `nisn` ditampung di `users` karena registrasi siswa (F1.1) menuntut NISN sejak akun dibuat; profil siswa/guru berupa tabel sendiri yang terhubung lewat `user_id` FK → `users`.
+1. **`users` vs `students`/`teachers`** — `nisn` tetap ada di `users` karena registrasi siswa (F1.1) menuntut NISN sejak akun dibuat; `students.nisn` menjadi acuan akademik dan disinkronkan trigger. Profil siswa/guru berupa tabel sendiri yang terhubung lewat `user_id` FK → `users`.
 2. **Absensi per jam pelajaran** — inti sistem adalah `attendance_sessions` (1 baris = jadwal × tanggal × kelas), sehingga absensi benar-benar *per mata pelajaran per pertemuan*, bukan sekali di awal hari. QR 30 detik (`qr_sessions`) membuka form ceklis → `student_attendance`.
 3. **Guru pengganti** — `teacher_attendance.status` ∈ `Hadir | Guru Pengganti | Tidak Hadir`, dengan `substitute_of` menunjuk guru pada jadwal; deteksi otomatis dari pembandingan scanner vs jadwal.
-4. **Jadwal berbasis tanggal** — `schedules.schedule_date` (bukan hari-in-a-week); kegiatan sekolah = `school_activities` + `schedule_overrides` yang mengubah jadwal tanggal tertentu.
+4. **Jadwal berbasis tanggal** — `schedules.schedule_date` + `start_time`/`end_time` (bukan hari-in-a-week). Kegiatan sekolah pada Epic 4 memakai `schedule_type = 'kegiatan'` + `activity_name`; master `school_activities`/`schedule_overrides` disiapkan untuk Epic 8. Slot kelas/guru dijaga unique + exclusion constraint.
 5. **Jurnal terpisah dari absensi** — `teaching_journals` tetap ada meski `teacher_attendance.status = Tidak Hadir` (PRD KS-18), dengan flag `submitted` untuk menandai "Guru Mapel tidak mengisi jurnal".
 6. **Multi-role** — otorisasi seluruh modul dihitung dari union `user_roles`; tidak ada kolom "role aktif" di tabel mana pun.
 7. **FK ke `users.id` wajib `ON DELETE RESTRICT`** pada seluruh tabel epic berikutnya — F2.6 hanya mengizinkan penghapusan akun staf yang tidak punya riwayat; cascade hanya berlaku untuk tabel Epic 1 (`user_roles`, `sessions`, `otp_codes`).
-8. **`activity_logs`** dimiliki Epic 13, tetapi tabelnya **dibuat di Epic 2** (`007`) sebagai fondasi agar event CUD bisa disimpan dan diverifikasi. Epic 2 menulis 7 event kanonik (`ACCOUNT_CREATED`, `ACCOUNT_UPDATED`, `ACCOUNT_DEACTIVATED`, `ACCOUNT_ACTIVATED`, `ROLE_ASSIGNED`, `ROLE_REVOKED`, `ACCOUNT_DELETED`) dalam transaksi yang sama dengan operasi CUD. Epic 13 menambah kolom/fitur tampilan & filter, bukan membuat ulang tabel. Tanpa FK agar log tetap utuh setelah akun pelaku/target dihapus.
+8. **`activity_logs`** dimiliki Epic 13, tetapi tabelnya **dibuat di Epic 2** (`007`) sebagai fondasi agar event CUD bisa disimpan dan diverifikasi. Epic 2 menulis 7 event kanonik akun; Epic 3/4 menambah event master data dan jadwal memakai `target_type` + `target_id` generik (`009`). Epic 13 menambah fitur tampilan/filter, bukan membuat ulang tabel. Tanpa FK agar log tetap utuh setelah target dihapus.
+9. **Epic 3/4 sudah fisik di database** — `academic_years`, `subjects`, `teachers`, `classes`, `students`, `teacher_subjects`, dan `schedules` dibuat lewat `010`-`016`. `class_memberships`, `class_officers`, dan `school_activities` masih rencana Epic 8/9/10.
